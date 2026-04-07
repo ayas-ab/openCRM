@@ -1,0 +1,1200 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserType {
+  admin
+  standard
+}
+
+enum OwnerType {
+  USER
+  QUEUE
+}
+
+enum PrincipalType {
+  USER
+  GROUP
+}
+
+enum ShareAccessLevel {
+  READ
+  EDIT
+  DELETE
+}
+
+enum AssignmentTargetType {
+  USER
+  QUEUE
+}
+
+enum NotificationType {
+  QUEUE_ASSIGNMENT
+  USER_ASSIGNMENT
+  COMMENT_MENTION
+}
+
+enum ListViewPrincipalType {
+  GROUP
+  PERMISSION_SET
+}
+
+enum ListViewMode {
+  table
+  kanban
+}
+
+enum MetadataDependencySourceType {
+  FIELD_DEFINITION
+  ASSIGNMENT_RULE
+  SHARING_RULE
+  DUPLICATE_RULE
+  VALIDATION_RULE
+  LIST_VIEW
+  DASHBOARD_WIDGET
+  RECORD_PAGE_LAYOUT
+  APP
+}
+
+enum DuplicateRuleAction {
+  NONE
+  WARN
+  BLOCK
+}
+
+enum MetadataDependencyReferenceKind {
+  LOOKUP_TARGET_OBJECT
+  TRIGGER_OBJECT
+  CRITERIA_FIELD
+  CONDITION_FIELD
+  COMPARE_FIELD
+  ERROR_FIELD
+  COLUMN_FIELD
+  SORT_FIELD
+  KANBAN_FIELD
+  VALUE_FIELD
+  GROUP_BY_FIELD
+  LAYOUT_FIELD
+  VISIBILITY_FIELD
+  HIGHLIGHT_FIELD
+  NAV_OBJECT
+}
+
+// ============================================================================
+// 1. ORGANIZATION (Multi-Tenancy)
+// ============================================================================
+
+model Organization {
+  id          Int      @id @default(autoincrement())
+  name        String
+  slug        String   @unique // e.g., "acme-corp"
+  ownerId     Int?
+  owner       User?    @relation("OrganizationOwner", fields: [ownerId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users             User[]
+  records           Record[]
+  apps              AppDefinition[]
+  permissionSets    PermissionSet[]
+  permissionGroups  PermissionSetGroup[]
+  objectDefinitions ObjectDefinition[]
+  queues            Queue[]
+  groups            Group[]
+  recordShares      RecordShare[]
+  assignmentRules   AssignmentRule[]
+  sharingRules      SharingRule[]
+  duplicateRules    DuplicateRule[]
+  notifications     Notification[]
+  fieldHistory      FieldHistory[]
+  recordOwnerHistory RecordOwnerHistory[]
+  recordComments    RecordComment[]
+  fileAttachments   FileAttachment[]
+  picklistOptions   PicklistOption[]
+  recordPageLayouts RecordPageLayout[]
+  recordPageAssignments RecordPageAssignment[]
+  listViews         ListView[]
+  listViewShares    ListViewShare[]
+  listViewPins      ListViewPin[]
+  userListViewPreferences UserListViewPreference[]
+  importJobs        ImportJob[]
+  metadataDependencies MetadataDependency[]
+
+  @@index([ownerId])
+}
+
+// ============================================================================
+// 2. AUTHENTICATION & USERS
+// ============================================================================
+
+model User {
+  id            Int       @id @default(autoincrement())
+  name          String?
+  email         String?
+  username      String    @unique
+  password      String?
+  
+  // User Type: "admin", "standard"
+  userType      UserType  @default(admin)
+  
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  ownedOrganizations Organization[] @relation("OrganizationOwner")
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Permissions
+  permissionAssignments PermissionSetAssignment[]
+  permissionSetGroupAssignments PermissionSetGroupAssignment[]
+  importJobs     ImportJob[] @relation("ImportJobCreator")
+
+  // Ownership
+  recordsOwned  Record[]  @relation("RecordOwner")
+  recordsCreated Record[] @relation("RecordCreator")
+  recordsLastModified Record[] @relation("RecordLastModifiedBy")
+  fieldHistoryChanges FieldHistory[]
+  ownerHistoryOld RecordOwnerHistory[] @relation("RecordOwnerHistoryOldUser")
+  ownerHistoryNew RecordOwnerHistory[] @relation("RecordOwnerHistoryNewUser")
+  ownerHistoryChanged RecordOwnerHistory[] @relation("RecordOwnerHistoryChangedBy")
+  recordComments RecordComment[]
+  recordCommentMentions RecordCommentMention[]
+  fileAttachments FileAttachment[]
+  listViewPins ListViewPin[]
+  listViewPreferences UserListViewPreference[]
+  companionRecord Record? @relation("UserCompanion")
+
+  // Queue Memberships
+  queueMemberships QueueMember[]
+
+  // Group Membership (one group per user for now)
+  groupId Int?
+  group   Group? @relation(fields: [groupId], references: [id])
+
+  // Assignment Rules
+  assignmentRulesTargeted AssignmentRule[]
+  notifications Notification[]
+
+  @@index([organizationId])
+  @@index([groupId])
+  @@index([username])
+  @@unique([organizationId, email])
+}
+
+// ============================================================================
+// 3. PERMISSIONS SYSTEM
+// ============================================================================
+
+model PermissionSet {
+  id          Int      @id @default(autoincrement())
+  name        String   // Not unique globally anymore, only per Org
+  description String?
+  
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  assignments PermissionSetAssignment[]
+  permissions ObjectPermission[]
+  
+  // Apps this permission set can access
+  appAccess   AppPermission[]
+
+  // System permissions (non-object, non-app)
+  allowDataLoading Boolean @default(false)
+
+  recordPageAssignments RecordPageAssignment[]
+  validationConditions ValidationCondition[] @relation("ValidationConditionPermissionSet")
+  
+  // Groups this set belongs to
+  groups      PermissionSetGroupMember[]
+
+  @@unique([organizationId, name])
+}
+
+model PermissionSetGroup {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  // The Permission Sets inside this group
+  permissionSets PermissionSetGroupMember[]
+  
+  // Assignments that came from this group
+  userAssignments PermissionSetGroupAssignment[]
+  assignmentSources PermissionSetAssignmentSource[]
+
+  @@unique([organizationId, name])
+}
+
+model PermissionSetGroupAssignment {
+  id        Int  @id @default(autoincrement())
+  userId    Int
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permissionSetGroupId Int
+  permissionSetGroup   PermissionSetGroup @relation(fields: [permissionSetGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permissionSetGroupId])
+  @@index([permissionSetGroupId])
+}
+
+model PermissionSetGroupMember {
+  id                   Int                @id @default(autoincrement())
+  permissionSetGroupId Int
+  group                PermissionSetGroup @relation(fields: [permissionSetGroupId], references: [id])
+  permissionSetId      Int
+  permissionSet        PermissionSet      @relation(fields: [permissionSetId], references: [id])
+
+  @@unique([permissionSetGroupId, permissionSetId])
+  @@index([permissionSetId])
+}
+
+model PermissionSetAssignment {
+  id              Int           @id @default(autoincrement())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id])
+  permissionSetId Int
+  permissionSet   PermissionSet @relation(fields: [permissionSetId], references: [id])
+  sources         PermissionSetAssignmentSource[]
+
+  @@unique([userId, permissionSetId])
+  @@index([permissionSetId])
+}
+
+enum PermissionSetAssignmentSourceType {
+  DIRECT
+  GROUP
+}
+
+enum ImportJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ImportJobMode {
+  INSERT
+  UPDATE
+  UPSERT
+}
+
+model ImportJob {
+  id             Int      @id @default(autoincrement())
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  objectDefId    Int
+  objectDef      ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  createdById    Int
+  createdBy      User     @relation("ImportJobCreator", fields: [createdById], references: [id])
+
+  fileName       String
+  mode           ImportJobMode
+  status         ImportJobStatus @default(PENDING)
+
+  totalRows      Int      @default(0)
+  successCount   Int      @default(0)
+  errorCount     Int      @default(0)
+
+  errorMessage   String?  @db.Text
+  completedAt    DateTime?
+
+  rows           ImportRow[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, objectDefId, createdAt])
+  @@index([createdById])
+}
+
+model ImportRow {
+  id        Int      @id @default(autoincrement())
+
+  jobId     Int
+  job       ImportJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  rowIndex  Int
+  rawData   Json
+  errors    Json?
+  warnings  Json?
+
+  recordId  Int?
+  record    Record? @relation(fields: [recordId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([jobId, rowIndex])
+  @@index([recordId])
+}
+
+model PermissionSetAssignmentSource {
+  id                   Int       @id @default(autoincrement())
+  assignmentId         Int
+  assignment           PermissionSetAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  sourceType           PermissionSetAssignmentSourceType
+  permissionSetGroupId Int?
+  permissionSetGroup   PermissionSetGroup? @relation(fields: [permissionSetGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([assignmentId, sourceType, permissionSetGroupId])
+  @@index([permissionSetGroupId])
+}
+
+model ObjectPermission {
+  id              Int           @id @default(autoincrement())
+  permissionSetId Int
+  permissionSet   PermissionSet @relation(fields: [permissionSetId], references: [id])
+  
+  objectDefId     Int           // Link to the Object Definition
+  objectDef       ObjectDefinition @relation(fields: [objectDefId], references: [id])
+  
+  allowRead       Boolean       @default(false)
+  allowCreate     Boolean       @default(false)
+  allowEdit       Boolean       @default(false)
+  allowDelete     Boolean       @default(false)
+  allowViewAll    Boolean       @default(false)
+  allowModifyAll  Boolean       @default(false)
+  allowModifyListViews Boolean  @default(false)
+
+  @@unique([permissionSetId, objectDefId])
+}
+
+model AppPermission {
+  id              Int           @id @default(autoincrement())
+  permissionSetId Int
+  permissionSet   PermissionSet @relation(fields: [permissionSetId], references: [id])
+  appId           Int
+  app             AppDefinition @relation(fields: [appId], references: [id])
+
+  @@unique([permissionSetId, appId])
+  @@index([appId])
+}
+
+// ============================================================================
+// 4. TEAMS & SHARING
+// ============================================================================
+
+model Queue {
+  id             Int      @id @default(autoincrement())
+  name           String
+  description    String?
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  members        QueueMember[]
+  recordsOwned   Record[] @relation("RecordQueueOwner")
+  assignmentRules AssignmentRule[]
+  ownerHistoryOld RecordOwnerHistory[] @relation("RecordOwnerHistoryOldQueue")
+  ownerHistoryNew RecordOwnerHistory[] @relation("RecordOwnerHistoryNewQueue")
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, name])
+}
+
+model QueueMember {
+  id        Int   @id @default(autoincrement())
+  queueId   Int
+  queue     Queue  @relation(fields: [queueId], references: [id])
+  userId    Int
+  user      User  @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@unique([queueId, userId])
+  @@index([userId])
+}
+
+model Group {
+  id             Int      @id @default(autoincrement())
+  name           String
+  description    String?
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  users          User[]
+  sharingRules   SharingRule[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, name])
+}
+
+model RecordShare {
+  id             Int      @id @default(autoincrement())
+  recordId       Int
+  record         Record   @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  principalType  PrincipalType
+  principalId    Int
+  accessLevel    ShareAccessLevel @default(READ)
+
+  createdAt      DateTime @default(now())
+
+  @@unique([recordId, principalType, principalId])
+  @@index([recordId])
+  @@index([principalType, principalId])
+  @@index([organizationId, principalType, principalId])
+  @@index([organizationId])
+}
+
+model AssignmentRule {
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  objectDefId    Int
+  objectDef      ObjectDefinition @relation(fields: [objectDefId], references: [id])
+
+  name           String
+  description    String?
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+
+  targetType     AssignmentTargetType
+  targetUserId   Int?
+  targetUser     User?    @relation(fields: [targetUserId], references: [id])
+  targetQueueId  Int?
+  targetQueue    Queue?   @relation(fields: [targetQueueId], references: [id])
+
+  criteria       Json
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, objectDefId])
+  @@index([objectDefId, sortOrder])
+}
+
+model SharingRule {
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  objectDefId    Int
+  objectDef      ObjectDefinition @relation(fields: [objectDefId], references: [id])
+  targetGroupId  Int
+  targetGroup    Group    @relation(fields: [targetGroupId], references: [id])
+
+  name           String
+  description    String?
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  criteria       Json
+  accessLevel    ShareAccessLevel @default(READ)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, objectDefId])
+  @@index([objectDefId, sortOrder])
+  @@index([targetGroupId])
+}
+
+// ============================================================================
+// 5. UNIVERSAL OBJECT ENGINE (The Core)
+// ============================================================================
+
+model ObjectDefinition {
+  id          Int      @id @default(autoincrement())
+  apiName     String   // "contact", "opportunity"
+  label       String   // "Contact"
+  pluralLabel String   // "Contacts"
+  icon        String?
+  description String?
+  
+  isSystem    Boolean  @default(false)
+  
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  fields          FieldDefinition[]
+  validationRules ValidationRule[]
+  records     Record[]
+  permissions ObjectPermission[]
+  assignmentRules AssignmentRule[]
+  recordPageLayouts RecordPageLayout[]
+  recordPageAssignments RecordPageAssignment[]
+  listViews   ListView[]
+  userListViewPreferences UserListViewPreference[]
+  importJobs ImportJob[]
+  
+  // Navigation
+  navItems    AppNavItem[]
+
+  // Dashboard Widgets
+  dashboardWidgets DashboardWidget[]
+  sharingRules SharingRule[]
+  duplicateRules DuplicateRule[]
+  fieldHistory FieldHistory[]
+  ownerHistory RecordOwnerHistory[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  notifyOnAssignment Boolean @default(false)
+  enableChatter Boolean @default(false)
+
+  @@unique([organizationId, apiName])
+}
+
+model FieldDefinition {
+  id          Int      @id @default(autoincrement())
+  objectDefId Int
+  objectDef   ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  apiName     String   // "first_name", "amount"
+  label       String   // "First Name"
+  type        String   // Text, Number, Date, DateTime, Checkbox, Phone, Email, Url, Lookup, Picklist
+  required    Boolean  @default(false)
+  isExternalId Boolean @default(false)
+  isUnique    Boolean  @default(false)
+  
+  // Configuration
+  options     Json?    // For Number/File/other field config
+  lookupTargetId Int?  // If type=Lookup
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  fieldData               FieldData[]
+  validationConditions    ValidationCondition[]
+  compareConditions       ValidationCondition[] @relation("ConditionCompareField")
+  errorForValidationRules ValidationRule[] @relation("ValidationRuleErrorField")
+  fieldHistory            FieldHistory[]
+  listViewColumns         ListViewColumn[]
+  kanbanListViews         ListView[] @relation("ListViewKanbanField")
+  fileAttachments         FileAttachment[]
+  duplicateRuleConditions DuplicateRuleCondition[]
+  picklistOptions         PicklistOption[]
+
+  @@unique([objectDefId, apiName])
+  @@index([lookupTargetId])
+}
+
+model PicklistOption {
+  id             Int      @id @default(autoincrement())
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  fieldDefId     Int
+  fieldDef       FieldDefinition @relation(fields: [fieldDefId], references: [id], onDelete: Cascade)
+
+  apiName        String
+  label          String
+  sortOrder      Int      @default(0)
+  isActive       Boolean  @default(true)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  fieldData      FieldData[]
+
+  @@unique([fieldDefId, apiName])
+  @@unique([fieldDefId, label])
+  @@index([fieldDefId, isActive, sortOrder])
+  @@index([organizationId])
+}
+
+model Record {
+  id          Int      @id @default(autoincrement())
+  name        String?  @db.VarChar(191)
+  
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  objectDefId Int
+  objectDef   ObjectDefinition @relation(fields: [objectDefId], references: [id])
+  
+  // Universal Data Storage (EAV Pattern)
+  fields      FieldData[]
+  
+  // Standard Audit Fields
+  ownerId     Int?
+  owner       User?     @relation("RecordOwner", fields: [ownerId], references: [id])
+  ownerType   OwnerType @default(USER)
+  ownerQueueId Int?
+  ownerQueue   Queue?    @relation("RecordQueueOwner", fields: [ownerQueueId], references: [id])
+  backingUserId Int?     @unique
+  backingUser   User?    @relation("UserCompanion", fields: [backingUserId], references: [id])
+  createdById Int
+  createdBy   User     @relation("RecordCreator", fields: [createdById], references: [id])
+  lastModifiedById Int
+  lastModifiedBy   User     @relation("RecordLastModifiedBy", fields: [lastModifiedById], references: [id])
+
+  shares      RecordShare[]
+  notifications Notification[]
+  fieldHistory FieldHistory[]
+  ownerHistory RecordOwnerHistory[]
+  recordComments RecordComment[]
+  fileAttachments FileAttachment[]
+  importRows     ImportRow[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([organizationId, objectDefId, createdAt])
+  @@index([organizationId, objectDefId, ownerId])
+  @@index([organizationId, objectDefId, ownerQueueId])
+  @@index([organizationId, objectDefId, name])
+  @@index([organizationId, name])
+  @@index([backingUserId])
+}
+
+model Notification {
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id])
+  recordId       Int?
+  record         Record?  @relation(fields: [recordId], references: [id])
+  type           NotificationType
+  message        String
+  isRead         Boolean  @default(false)
+
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, userId])
+  @@index([userId, isRead])
+  @@index([recordId])
+}
+
+model RecordComment {
+  id             Int      @id @default(autoincrement())
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  recordId       Int
+  record         Record   @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  authorId       Int
+  author         User     @relation(fields: [authorId], references: [id])
+  mentions       RecordCommentMention[]
+
+  bodyText       String   @db.Text
+  isDeleted      Boolean  @default(false)
+  editedAt       DateTime?
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, recordId, createdAt])
+  @@index([recordId, createdAt])
+  @@index([authorId])
+}
+
+model RecordCommentMention {
+  id        Int      @id @default(autoincrement())
+  commentId Int
+  comment   RecordComment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@unique([commentId, userId])
+  @@index([userId])
+}
+
+model FileAttachment {
+  id             Int      @id @default(autoincrement())
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  recordId       Int
+  record         Record   @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  fieldDefId     Int
+  fieldDef       FieldDefinition @relation(fields: [fieldDefId], references: [id], onDelete: Cascade)
+
+  displayName    String
+  filename       String
+  mimeType       String
+  size           Int
+  storagePath    String
+
+  createdById    Int
+  createdBy      User     @relation(fields: [createdById], references: [id])
+
+  createdAt      DateTime @default(now())
+
+  @@unique([recordId, fieldDefId])
+  @@index([organizationId, recordId])
+  @@index([recordId, fieldDefId])
+  @@index([fieldDefId])
+  @@index([organizationId])
+}
+
+model FieldData {
+  id          Int      @id @default(autoincrement())
+  
+  recordId    Int
+  record      Record   @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  
+  fieldDefId  Int
+  fieldDef    FieldDefinition @relation(fields: [fieldDefId], references: [id], onDelete: Cascade)
+  
+  valueText   String?  @db.Text
+  valueSearch String?  @db.VarChar(191)
+  valueNumber Decimal? @db.Decimal(18, 4)
+  valueDate   DateTime?
+  valueBoolean Boolean?
+  valueLookup Int?
+  valuePicklistId Int?
+  valuePicklist  PicklistOption? @relation(fields: [valuePicklistId], references: [id], onDelete: SetNull)
+  
+  @@unique([recordId, fieldDefId])
+  @@index([recordId])
+  @@index([fieldDefId, valueSearch])
+  @@index([fieldDefId, valueNumber])
+  @@index([fieldDefId, valueDate])
+  @@index([fieldDefId, valueLookup])
+  @@index([fieldDefId, valuePicklistId])
+  @@index([valuePicklistId])
+}
+
+model FieldHistory {
+  id          Int      @id @default(autoincrement())
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  recordId    Int
+  record      Record   @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  objectDefId Int
+  objectDef   ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  fieldDefId  Int
+  fieldDef    FieldDefinition @relation(fields: [fieldDefId], references: [id], onDelete: Cascade)
+
+  fieldApiNameSnapshot String @db.VarChar(191)
+  fieldLabelSnapshot   String @db.VarChar(191)
+
+  oldValueText    String?  @db.Text
+  oldValueNumber  Decimal? @db.Decimal(18, 4)
+  oldValueDate    DateTime?
+  oldValueBoolean Boolean?
+  oldValueLookup  Int?
+
+  newValueText    String?  @db.Text
+  newValueNumber  Decimal? @db.Decimal(18, 4)
+  newValueDate    DateTime?
+  newValueBoolean Boolean?
+  newValueLookup  Int?
+
+  changedById Int
+  changedBy   User     @relation(fields: [changedById], references: [id])
+
+  changedAt   DateTime @default(now())
+
+  @@index([organizationId, recordId, changedAt])
+  @@index([recordId, changedAt])
+  @@index([fieldDefId, changedAt])
+  @@index([objectDefId, changedAt])
+}
+
+model RecordOwnerHistory {
+  id          Int      @id @default(autoincrement())
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  recordId    Int
+  record      Record   @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  objectDefId Int
+  objectDef   ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  oldOwnerType OwnerType
+  oldOwnerId   Int?
+  oldOwner     User?   @relation("RecordOwnerHistoryOldUser", fields: [oldOwnerId], references: [id])
+  oldOwnerQueueId Int?
+  oldOwnerQueue   Queue? @relation("RecordOwnerHistoryOldQueue", fields: [oldOwnerQueueId], references: [id])
+
+  newOwnerType OwnerType
+  newOwnerId   Int?
+  newOwner     User?   @relation("RecordOwnerHistoryNewUser", fields: [newOwnerId], references: [id])
+  newOwnerQueueId Int?
+  newOwnerQueue   Queue? @relation("RecordOwnerHistoryNewQueue", fields: [newOwnerQueueId], references: [id])
+
+  changedById Int
+  changedBy   User     @relation("RecordOwnerHistoryChangedBy", fields: [changedById], references: [id])
+
+  changedAt   DateTime @default(now())
+
+  @@index([organizationId, recordId, changedAt])
+  @@index([recordId, changedAt])
+  @@index([objectDefId, changedAt])
+}
+
+model RecordPageLayout {
+  id          Int      @id @default(autoincrement())
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  objectDefId Int
+  objectDef   ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  name        String
+  isDefault   Boolean  @default(false)
+  config      Json
+
+  assignments RecordPageAssignment[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([organizationId, objectDefId])
+  @@index([objectDefId, isDefault])
+}
+
+model RecordPageAssignment {
+  id          Int      @id @default(autoincrement())
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  objectDefId Int
+  objectDef   ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  appId       Int
+  app         AppDefinition @relation(fields: [appId], references: [id], onDelete: Cascade)
+
+  permissionSetId Int?
+  permissionSet   PermissionSet? @relation(fields: [permissionSetId], references: [id], onDelete: SetNull)
+
+  layoutId   Int
+  layout     RecordPageLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([organizationId, objectDefId, appId])
+  @@index([layoutId])
+  @@index([permissionSetId])
+  @@unique([objectDefId, appId, permissionSetId])
+}
+
+model ListView {
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  objectDefId Int
+  objectDef   ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  criteria    Json?
+
+  sortField    String?
+  sortDirection String @default("asc")
+
+  isDefault   Boolean  @default(false)
+  isGlobal    Boolean  @default(false)
+
+  viewMode    ListViewMode @default(table)
+  kanbanGroupByFieldDefId Int?
+  kanbanGroupByFieldDef   FieldDefinition? @relation("ListViewKanbanField", fields: [kanbanGroupByFieldDefId], references: [id], onDelete: SetNull)
+
+  columns     ListViewColumn[]
+  shares      ListViewShare[]
+  pins        ListViewPin[]
+  userDefaultPreferences UserListViewPreference[] @relation("UserDefaultListView")
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([organizationId, objectDefId, name])
+  @@index([organizationId, objectDefId])
+}
+
+model ListViewColumn {
+  id         Int      @id @default(autoincrement())
+
+  listViewId Int
+  listView   ListView @relation(fields: [listViewId], references: [id], onDelete: Cascade)
+
+  fieldDefId Int
+  fieldDef   FieldDefinition @relation(fields: [fieldDefId], references: [id], onDelete: Cascade)
+
+  sortOrder  Int      @default(0)
+  width      String?  @db.VarChar(32)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([listViewId, fieldDefId])
+  @@index([listViewId, sortOrder])
+}
+
+model ListViewShare {
+  id             Int      @id @default(autoincrement())
+  listViewId     Int
+  listView       ListView @relation(fields: [listViewId], references: [id], onDelete: Cascade)
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  principalType  ListViewPrincipalType
+  principalId    Int
+
+  createdAt      DateTime @default(now())
+
+  @@unique([listViewId, principalType, principalId])
+  @@index([principalType, principalId])
+  @@index([organizationId, principalType, principalId])
+}
+
+model UserListViewPreference {
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  objectDefId    Int
+  objectDef      ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  defaultListViewId Int?
+  defaultListView   ListView? @relation("UserDefaultListView", fields: [defaultListViewId], references: [id], onDelete: SetNull)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([userId, objectDefId])
+  @@index([organizationId])
+  @@index([objectDefId])
+}
+
+model ListViewPin {
+  id         Int      @id @default(autoincrement())
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  listViewId Int
+  listView   ListView @relation(fields: [listViewId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, listViewId])
+  @@index([organizationId])
+  @@index([userId])
+}
+
+model ValidationRule {
+  id            Int      @id @default(autoincrement())
+
+  objectDefId   Int
+  objectDef     ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  name          String
+  description   String?
+  errorMessage  String
+  isActive      Boolean  @default(true)
+  logicOperator String   @default("ALL") // ALL = AND, ANY = OR, CUSTOM = expression
+  logicExpression String? @db.Text // e.g. "(1 && 2) || 3" referencing condition order
+  errorPlacement String  @default("toast") // toast | inline
+  errorFieldId   Int?
+  errorField     FieldDefinition? @relation("ValidationRuleErrorField", fields: [errorFieldId], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  conditions    ValidationCondition[]
+
+  @@index([objectDefId])
+  @@index([errorFieldId])
+}
+
+model ValidationCondition {
+  id             Int      @id @default(autoincrement())
+
+  ruleId         Int
+  rule           ValidationRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  fieldDefId     Int?
+  fieldDef       FieldDefinition? @relation(fields: [fieldDefId], references: [id], onDelete: SetNull)
+
+  compareFieldId Int?
+  compareField   FieldDefinition? @relation("ConditionCompareField", fields: [compareFieldId], references: [id], onDelete: SetNull)
+
+  systemField    String?
+  permissionSetId Int?
+  permissionSet  PermissionSet? @relation("ValidationConditionPermissionSet", fields: [permissionSetId], references: [id], onDelete: SetNull)
+
+  operator       String
+  compareValue   String?
+  compareSource  String   @default("value") // value | field
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([ruleId])
+  @@index([fieldDefId])
+  @@index([compareFieldId])
+  @@index([permissionSetId])
+}
+
+model DuplicateRule {
+  id             Int      @id @default(autoincrement())
+
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  objectDefId    Int
+  objectDef      ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+
+  name           String
+  description    String?
+  isActive       Boolean  @default(true)
+  sortOrder      Int      @default(0)
+  createAction   DuplicateRuleAction @default(WARN)
+  editAction     DuplicateRuleAction @default(WARN)
+  logicOperator  String   @default("ALL")
+  logicExpression String? @db.Text
+
+  conditions     DuplicateRuleCondition[]
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, objectDefId])
+  @@index([objectDefId, sortOrder])
+}
+
+model DuplicateRuleCondition {
+  id         Int      @id @default(autoincrement())
+
+  ruleId     Int
+  rule       DuplicateRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  fieldDefId Int
+  fieldDef   FieldDefinition @relation(fields: [fieldDefId], references: [id], onDelete: Cascade)
+
+  sortOrder  Int      @default(0)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([ruleId, fieldDefId])
+  @@index([ruleId, sortOrder])
+  @@index([fieldDefId])
+}
+
+model MetadataDependency {
+  id             Int      @id @default(autoincrement())
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  sourceType     MetadataDependencySourceType
+  sourceId       Int
+  sourceLabel    String
+  sourcePath     String?
+  sourceObjectDefId Int?
+  sourceAppId    Int?
+
+  objectDefId    Int?
+  fieldDefId     Int?
+
+  referenceKind  MetadataDependencyReferenceKind
+  isBlockingDelete Boolean @default(true)
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([organizationId, objectDefId])
+  @@index([organizationId, fieldDefId])
+  @@index([organizationId, sourceType, sourceId])
+}
+
+// ============================================================================
+// 6. APP BUILDER
+// ============================================================================
+
+model AppDefinition {
+  id          Int      @id @default(autoincrement())
+  name        String
+  apiName     String
+  icon        String?
+  description String?
+  
+  organizationId Int
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  navItems    AppNavItem[]
+  permissions AppPermission[]
+  widgets     DashboardWidget[]
+  recordPageAssignments RecordPageAssignment[]
+
+  @@unique([organizationId, name])
+  @@unique([organizationId, apiName])
+  @@index([organizationId, apiName])
+}
+
+model DashboardWidget {
+  id          Int      @id @default(autoincrement())
+  
+  // Relationship to App
+  appId       Int
+  app         AppDefinition @relation(fields: [appId], references: [id], onDelete: Cascade)
+  
+  // Relationship to ObjectDefinition (the object this widget displays data for)
+  objectDefId Int
+  objectDef   ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+  
+  type        String   // "metric", "list", "chart"
+  title       String
+  sortOrder   Int      @default(0)
+  
+  // Layout + Config (JSON)
+  // layout: { colSpan: 3, rowSpan?: 1 }
+  // config: typed per widget type
+  layout      Json?
+  config      Json
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@index([appId, sortOrder])
+  @@index([objectDefId])
+}
+
+model AppNavItem {
+  id          Int              @id @default(autoincrement())
+  appId       Int
+  app         AppDefinition    @relation(fields: [appId], references: [id], onDelete: Cascade)
+  
+  objectDefId Int
+  objectDef   ObjectDefinition @relation(fields: [objectDefId], references: [id], onDelete: Cascade)
+  
+  sortOrder   Int              @default(0)
+  
+  @@index([appId, sortOrder])
+}

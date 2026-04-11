@@ -18,6 +18,7 @@ type CleanMinimalRegisterProps = {
     error?: string | null;
     fieldErrors?: Partial<Record<keyof RegisterFormData, string>>;
     isLoading?: boolean;
+    securityChallenge?: React.ReactNode;
     onChange: (field: keyof RegisterFormData, value: string) => void;
     onSubmit: () => void;
     ctaHref?: string;
@@ -30,6 +31,7 @@ export function CleanMinimalRegister({
     error,
     fieldErrors,
     isLoading = false,
+    securityChallenge,
     onChange,
     onSubmit,
     ctaHref = "/login",
@@ -107,6 +109,8 @@ export function CleanMinimalRegister({
                             {error}
                         </div>
                     ) : null}
+
+                    {securityChallenge}
                 </div>
 
                 <Button

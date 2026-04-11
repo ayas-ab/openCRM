@@ -12,6 +12,7 @@ type CleanMinimalSignInProps = {
     error?: string | null;
     isLoading?: boolean;
     submitDisabled?: boolean;
+    securityChallenge?: React.ReactNode;
     onIdentifierChange: (value: string) => void;
     onPasswordChange: (value: string) => void;
     ctaHref?: string;
@@ -25,6 +26,7 @@ export function CleanMinimalSignIn({
     error,
     isLoading = false,
     submitDisabled = false,
+    securityChallenge,
     onIdentifierChange,
     onPasswordChange,
     ctaHref = "/register",
@@ -82,6 +84,8 @@ export function CleanMinimalSignIn({
                             {error}
                         </div>
                     ) : null}
+
+                    {securityChallenge}
                 </div>
 
                 <Button

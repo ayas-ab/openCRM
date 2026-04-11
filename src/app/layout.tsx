@@ -28,7 +28,7 @@ export default function RootLayout({
   return (
     // Some browser extensions inject attributes on <html> before React hydrates.
     // Suppress the root warning so extension noise does not look like an app bug.
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

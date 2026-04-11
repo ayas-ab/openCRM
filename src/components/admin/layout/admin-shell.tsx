@@ -21,9 +21,9 @@ export function AdminShell({ user, children }: AdminShellProps) {
         <div className="flex min-h-screen flex-col">
             <div className="flex flex-1">
                 <AdminSidebar />
-                <div className="flex-1 flex flex-col">
+                <div className="flex min-w-0 flex-1 flex-col">
                     <AdminHeader user={user} />
-                    <main className="flex-1 p-6 bg-muted/10">
+                    <main className="flex-1 bg-muted/10 p-4 md:p-6">
                         {children}
                     </main>
                 </div>

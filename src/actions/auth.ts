@@ -6,6 +6,8 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { createOrgTemplate } from "@/lib/seeding/create-org-template";
 import { ensureUserCompanionRecord } from "@/lib/user-companion";
+import { headers } from "next/headers";
+import { getClientIpFromHeaders, verifyTurnstileToken } from "@/lib/security/turnstile";
 
 const registerSchema = z.object({
     organizationName: z.string().min(2, "Organization name must be at least 2 characters"),
@@ -18,6 +20,7 @@ const registerSchema = z.object({
         .transform((value) => value.toLowerCase()),
     email: z.string().email("Invalid email address"),
     password: z.string().min(8, "Password must be at least 8 characters"),
+    turnstileToken: z.string().trim().min(1, "Complete the security challenge."),
 });
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -34,6 +37,21 @@ export async function register(data: z.infer<typeof registerSchema>) {
         // Validate input
         const validated = registerSchema.parse(data);
         debugLog("Validation passed");
+
+        const requestHeaders = await headers();
+        const turnstileResult = await verifyTurnstileToken(
+            validated.turnstileToken,
+            getClientIpFromHeaders(requestHeaders)
+        );
+
+        if (!turnstileResult.success) {
+            return {
+                success: false,
+                error: turnstileResult.reason === "unavailable"
+                    ? "Security challenge is unavailable. Please contact support."
+                    : "Security challenge failed. Please try again.",
+            };
+        }
 
         // Check if username already exists
         const existingUsername = await db.user.findUnique({
@@ -142,7 +160,7 @@ export async function register(data: z.infer<typeof registerSchema>) {
                     } else {
                         errorMessages = error.message;
                     }
-                } catch (e) {
+                } catch {
                     errorMessages = error.message;
                 }
             }

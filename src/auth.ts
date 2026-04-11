@@ -1,7 +1,13 @@
 import NextAuth from "next-auth";
+import { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { db } from "@/lib/db";
 import bcrypt from "bcryptjs";
+import { getClientIpFromHeaders, verifyTurnstileToken } from "@/lib/security/turnstile";
+
+class TurnstileSigninError extends CredentialsSignin {
+    code = "turnstile";
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
     providers: [
@@ -9,8 +15,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             credentials: {
                 username: { label: "Username", type: "text" },
                 password: { label: "Password", type: "password" },
+                turnstileToken: { label: "Turnstile Token", type: "text" },
             },
-            async authorize(credentials) {
+            async authorize(credentials, request) {
                 if (!credentials?.username || !credentials?.password) {
                     return null;
                 }
@@ -18,6 +25,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 const normalizedUsername = (credentials.username as string)
                     .trim()
                     .toLowerCase();
+                const turnstileResult = await verifyTurnstileToken(
+                    credentials.turnstileToken as string | undefined,
+                    getClientIpFromHeaders(request.headers)
+                );
+
+                if (!turnstileResult.success) {
+                    throw new TurnstileSigninError();
+                }
 
                 const user = await db.user.findUnique({
                     where: { username: normalizedUsername },
